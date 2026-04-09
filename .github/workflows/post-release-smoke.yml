@@ -1,0 +1,70 @@
+﻿name: Post-Release Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Base URL to verify, e.g. https://api.example.com"
+        required: true
+        type: string
+      register_password:
+        description: "Test password for register/strength endpoints"
+        required: false
+        default: "Abc!1234"
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Health check
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ inputs.base_url }}"
+          curl -fsS "${base}/healthz" | grep '"status":"ok"'
+
+      - name: Metrics check
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ inputs.base_url }}"
+          curl -fsS "${base}/metrics" | grep 'passgen_http_requests_total'
+
+      - name: API version header check
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ inputs.base_url }}"
+          version=$(curl -sSI "${base}/healthz" | tr -d '\r' | awk -F': ' 'tolower($1)=="x-api-version" {print $2}')
+          test "${version}" = "v1"
+
+      - name: Register endpoint smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ inputs.base_url }}"
+          password='${{ inputs.register_password }}'
+          payload=$(printf '{"password":"%s"}' "$password")
+          body=$(curl -fsS -H 'Content-Type: application/json' -d "$payload" "${base}/v1/passwords/register")
+          echo "$body" | grep '"stored":true'
+          echo "$body" | grep '"transport_ciphertext"'
+          if echo "$body" | grep -q '"password"'; then
+            echo "response contains forbidden plaintext field" >&2
+            exit 1
+          fi
+
+      - name: Strength endpoint smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ inputs.base_url }}"
+          password='${{ inputs.register_password }}'
+          payload=$(printf '{"password":"%s"}' "$password")
+          body=$(curl -fsS -H 'Content-Type: application/json' -d "$payload" "${base}/v1/passwords/strength")
+          echo "$body" | grep '"score"'
+          echo "$body" | grep '"label"'
+

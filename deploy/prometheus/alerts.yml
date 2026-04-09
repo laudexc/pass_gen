@@ -1,0 +1,39 @@
+﻿groups:
+  - name: passgen-alerts
+    rules:
+      - alert: PassgenHighErrorRate
+        expr: |
+          (
+            sum(rate(passgen_http_requests_total{status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(passgen_http_requests_total[5m])), 1)
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "pass_gen 5xx error rate is high"
+          description: "5xx error ratio is above 5% for 10 minutes."
+
+      - alert: PassgenHighP95Latency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(passgen_http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 0.75
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "pass_gen request latency is high"
+          description: "p95 latency is above 750ms for 10 minutes."
+
+      - alert: PassgenRateLimitFlood
+        expr: |
+          sum(rate(passgen_http_requests_total{status="429"}[5m])) > 5
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: "pass_gen is throttling many requests"
+          description: "Rate-limited responses exceed 5 req/s for 5 minutes."
