@@ -1,42 +1,33 @@
 ﻿# pass_gen
 
-`pass_gen` — backend-сервис для безопасной работы с паролями.
+`pass_gen` — это сервис для безопасной работы с паролями.
 
-Ключевая идея:
-- пароль можно принять и обработать,
-- но наружу plaintext-пароль не возвращается,
+Главное:
+- plaintext пароль не возвращается клиенту,
 - в БД хранится только Argon2id-хеш,
-- для межсервисной передачи используется шифртекст (AES-GCM + Base64).
+- между сервисами передается только шифртекст (AES-GCM + Base64).
+
+## Что умеет
+
+- `POST /v1/passwords/register` — принять пароль, сохранить хеш, вернуть шифртекст.
+- `POST /v1/passwords/generate` — сгенерировать пароли, сохранить хеши, вернуть шифртексты.
+- `POST /v1/passwords/validate` — проверить пароль против хеша.
+- `POST /v1/passwords/strength` — оценить сложность пароля.
+- `GET /healthz` — health check.
+- `GET /metrics` — Prometheus metrics.
 
 ---
 
-## Что умеет проект
+## Установка и запуск с нуля (очень просто)
 
-1. Сгенерировать безопасные пароли.
-2. Принять пароль пользователя и сохранить только хеш.
-3. Проверить пароль против хеша.
-4. Оценить сложность пароля.
-5. Отдать метрики для Prometheus.
+Инструкция для Windows + PowerShell.
 
-HTTP API:
-- `GET /healthz`
-- `GET /metrics`
-- `POST /v1/passwords/register`
-- `POST /v1/passwords/generate`
-- `POST /v1/passwords/validate`
-- `POST /v1/passwords/strength`
+## 1) Установи зависимости
 
----
-
-## Быстрый старт (самый простой путь)
-
-Инструкция рассчитана на Windows + PowerShell.
-
-### 1. Что должно быть установлено
-
-1. Git
-2. Go (актуальная версия)
-3. Docker Desktop
+Нужно:
+- Git
+- Go
+- Docker Desktop
 
 Проверка:
 
@@ -46,41 +37,51 @@ docker --version
 docker compose version
 ```
 
-### 2. Скачать проект
+## 2) Склонируй репозиторий
+
+По SSH:
 
 ```powershell
-git clone <URL_ТВОЕГО_РЕПО>
+git clone git@github.com:laudexc/pass_gen.git
 cd pass_gen
 ```
 
-### 3. Создать `.env`
+Или по HTTPS:
+
+```powershell
+git clone https://github.com/laudexc/pass_gen
+cd pass_gen
+```
+
+## 3) Создай `.env`
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-### 4. Сгенерировать ключ шифрования
+## 4) Сгенерируй ключ и вставь в `.env`
+
+Сгенерировать:
 
 ```powershell
 go run .\cmd\passgen keygen
 ```
 
-Скопируй выведенную строку и вставь в `.env`:
+Открой `.env` и вставь в строку:
 
 ```env
-PASSGEN_TRANSPORT_KEY_BASE64=СЮДА_ВСТАВЬ_КЛЮЧ
+PASSGEN_TRANSPORT_KEY_BASE64=СЮДА_КЛЮЧ
 ```
 
-### 5. Запустить сервис и БД
+## 5) Запусти сервис и БД
 
 ```powershell
 docker compose up --build
 ```
 
-После запуска сервис доступен на:
-- `http://localhost:8080`
+Сервис будет на `http://localhost:8080`.
 
-### 6. Проверить, что сервис жив
+## 6) Проверь что всё живо
 
 ```powershell
 curl http://localhost:8080/healthz
@@ -94,11 +95,43 @@ curl http://localhost:8080/healthz
 
 ---
 
-## Как пользоваться API (по шагам)
+## Как делать HTTP запросы БЕЗ Postman
 
-## Шаг 1. Зарегистрировать пароль
+Ниже 2 варианта: `Invoke-RestMethod` (самый удобный в PowerShell) и `curl`.
 
-Запрос:
+## Вариант A: PowerShell `Invoke-RestMethod`
+
+## 1. Register
+
+```powershell
+$body = @{ password = "MyStrong!Pass123" } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "http://localhost:8080/v1/passwords/register" -ContentType "application/json" -Body $body
+```
+
+## 2. Generate
+
+```powershell
+$body = @{ length = 12; count = 3 } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "http://localhost:8080/v1/passwords/generate" -ContentType "application/json" -Body $body
+```
+
+## 3. Strength
+
+```powershell
+$body = @{ password = "MyStrong!Pass123" } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "http://localhost:8080/v1/passwords/strength" -ContentType "application/json" -Body $body
+```
+
+## 4. Validate
+
+Сначала тебе нужен хеш (например из БД или предыдущего шага в твоем потоке).
+
+```powershell
+$body = @{ password = "MyStrong!Pass123"; hash = "<ARGON2ID_HASH>" } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "http://localhost:8080/v1/passwords/validate" -ContentType "application/json" -Body $body
+```
+
+## Вариант B: curl
 
 ```powershell
 curl -X POST http://localhost:8080/v1/passwords/register `
@@ -106,70 +139,23 @@ curl -X POST http://localhost:8080/v1/passwords/register `
   -d "{\"password\":\"MyStrong!Pass123\"}"
 ```
 
-Что происходит:
-1. Пароль принимается backend-ом.
-2. В БД сохраняется только Argon2id-хеш.
-3. В ответ приходит только `transport_ciphertext`.
-
-## Шаг 2. Сгенерировать пароли
-
-```powershell
-curl -X POST http://localhost:8080/v1/passwords/generate `
-  -H "Content-Type: application/json" `
-  -d "{\"length\":12,\"count\":3}"
-```
-
-Что получишь:
-- список `transport_ciphertexts`.
-- plaintext-пароли не возвращаются.
-
-## Шаг 3. Проверить пароль против хеша
-
-```powershell
-curl -X POST http://localhost:8080/v1/passwords/validate `
-  -H "Content-Type: application/json" `
-  -d "{\"password\":\"MyStrong!Pass123\",\"hash\":\"<ARGON2ID_HASH>\"}"
-```
-
-Ожидаемо:
-
-```json
-{"valid":true}
-```
-
-## Шаг 4. Оценить сложность
-
-```powershell
-curl -X POST http://localhost:8080/v1/passwords/strength `
-  -H "Content-Type: application/json" `
-  -d "{\"password\":\"MyStrong!Pass123\"}"
-```
-
-Ожидаемо: вернется `score`, `label` и детали валидации.
-
-## Шаг 5. Проверить метрики
-
-```powershell
-curl http://localhost:8080/metrics
-```
-
 ---
 
 ## Если хочешь через Postman
 
-1. Создай запрос.
-2. Выбери метод (`GET` или `POST`).
-3. URL: `http://localhost:8080/...`
-4. Для `POST`: `Body -> raw -> JSON`.
-5. Заголовок: `Content-Type: application/json`.
+Можно, конечно:
+- Method: `POST`/`GET`
+- URL: `http://localhost:8080/...`
+- Для POST: `Body -> raw -> JSON`
+- Header: `Content-Type: application/json`
 
-Проверь response headers:
+Полезные response headers:
 - `X-Request-ID`
 - `X-API-Version: v1`
 
 ---
 
-## CLI команды (без HTTP)
+## CLI (без HTTP)
 
 ```powershell
 go run .\cmd\passgen keygen
@@ -179,9 +165,9 @@ go run .\cmd\passgen strength --password "MyStrong!Pass123" --json
 
 ---
 
-## Тесты и проверки
+## Проверки проекта
 
-## Юнит + интеграционные тесты
+## Тесты
 
 ```powershell
 go test ./...
@@ -204,8 +190,6 @@ go run .\cmd\migrationcheck
 
 ## Мониторинг (опционально)
 
-Запуск с профилем observability:
-
 ```powershell
 docker compose --profile observability up --build
 ```
@@ -217,13 +201,11 @@ docker compose --profile observability up --build
 
 ---
 
-## Частые проблемы
+## Частые ошибки
 
 ## Ошибка `directory not found` при `go run ./cmd/passgen ...`
 
-Причина: ты находишься не в корне проекта.
-
-Решение:
+Ты не в корне проекта.
 
 ```powershell
 cd C:\.My\Golang_files\pass_gen
@@ -236,13 +218,13 @@ go run .\cmd\passgen keygen
 go run . keygen
 ```
 
-## Ошибка Docker
+## Docker не стартует
 
 Проверь, что Docker Desktop запущен.
 
-## Не стартует API из-за БД
+## API не стартует
 
-Проверь значения в `.env`:
+Проверь `.env`:
 - `POSTGRES_DB`
 - `POSTGRES_USER`
 - `POSTGRES_PASSWORD`
@@ -250,9 +232,22 @@ go run . keygen
 
 ---
 
-## Важно по безопасности
+## Безопасность
 
-1. Не коммить `.env` в git.
-2. Не логируй plaintext-пароли.
-3. В проде храни секреты в секрет-менеджере, а не в файле.
-4. Для изменений API держи совместимость `v1`.
+- Не коммить `.env`.
+- Не логируй plaintext пароли.
+- В проде используй secret manager, а не `.env`.
+- Для API держи совместимость `v1`.
+
+---
+
+## Полезные документы
+
+- OpenAPI: `docs/openapi.yaml`
+- Версионирование API: `docs/api-versioning.md`
+- Наблюдаемость: `docs/observability.md`
+- SLO: `docs/slo.md`
+- Runbook: `docs/runbook.md`
+- Release process: `docs/release-process.md`
+- Launch checklist: `docs/launch-checklist.md`
+- Env reference: `docs/env.md`
