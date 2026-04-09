@@ -8,8 +8,10 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"pass_gen/internal/repository/postgres"
@@ -160,6 +162,8 @@ func runServer(args []string) int {
 	addr := fs.String("addr", ":8080", "http listen address")
 	dsn := fs.String("db-dsn", os.Getenv("PASSGEN_DB_DSN"), "postgres dsn")
 	transportKeyB64 := fs.String("transport-key-base64", os.Getenv("PASSGEN_TRANSPORT_KEY_BASE64"), "transport key in base64 (32-byte key)")
+	rateLimitRPS := fs.Int("rate-limit-rps", envInt("PASSGEN_RATE_LIMIT_RPS", 30), "max requests per second")
+	rateLimitBurst := fs.Int("rate-limit-burst", envInt("PASSGEN_RATE_LIMIT_BURST", 60), "max burst requests")
 
 	if err := fs.Parse(args); err != nil {
 		return exitValidationErr
@@ -193,7 +197,13 @@ func runServer(args []string) int {
 	}
 
 	processor := usecase.NewPasswordProcessor(repo)
-	srv, err := httpserver.New(processor, key)
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	srv, err := httpserver.New(
+		processor,
+		key,
+		httpserver.WithLogger(logger),
+		httpserver.WithRateLimit(*rateLimitRPS, *rateLimitBurst),
+	)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return exitRuntimeErr
@@ -263,5 +273,17 @@ func printUsage() {
 	fmt.Println("  validate --password <plain> --hash <argon2id> [--json]")
 	fmt.Println("  strength --password <plain> [--json]")
 	fmt.Println("  keygen")
-	fmt.Println("  server --addr :8080 --db-dsn <dsn> --transport-key-base64 <key>")
+	fmt.Println("  server --addr :8080 --db-dsn <dsn> --transport-key-base64 <key> [--rate-limit-rps 30 --rate-limit-burst 60]")
+}
+
+func envInt(name string, fallback int) int {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
 }

@@ -31,5 +31,29 @@
       PASSGEN_TRANSPORT_KEY_BASE64: ${PASSGEN_TRANSPORT_KEY_BASE64:?set PASSGEN_TRANSPORT_KEY_BASE64 in .env}
     command: ["server", "--addr", ":8080"]
 
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    restart: unless-stopped
+    profiles: ["observability"]
+    depends_on:
+      app:
+        condition: service_started
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    restart: unless-stopped
+    profiles: ["observability"]
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./deploy/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+
 volumes:
   pgdata:

@@ -2,13 +2,12 @@ package httpserver
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/hex"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
-
-	"crypto/rand"
 )
 
 const requestIDHeader = "X-Request-ID"
@@ -40,16 +39,50 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func recoveryMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			if rec := recover(); rec != nil {
-				log.Printf("panic recovered request_id=%s err=%v", requestIDFromContext(r.Context()), rec)
-				writeError(w, r, http.StatusInternalServerError, "internal server error")
-			}
-		}()
-		next.ServeHTTP(w, r)
-	})
+func recoveryMiddleware(logger *slog.Logger) middleware {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if rec := recover(); rec != nil {
+					logger.Error("panic recovered",
+						slog.Any("panic", rec),
+						slog.String("request_id", requestIDFromContext(r.Context())),
+						slog.String("method", r.Method),
+						slog.String("path", r.URL.Path),
+					)
+					writeError(w, r, http.StatusInternalServerError, "internal server error")
+				}
+			}()
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func loggingMiddleware(logger *slog.Logger) middleware {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			rec := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+			next.ServeHTTP(rec, r)
+
+			logger.Info("http request",
+				slog.String("request_id", requestIDFromContext(r.Context())),
+				slog.String("method", r.Method),
+				slog.String("path", r.URL.Path),
+				slog.Int("status", rec.statusCode),
+				slog.Int64("duration_ms", time.Since(start).Milliseconds()),
+				slog.String("remote_addr", r.RemoteAddr),
+			)
+		})
+	}
 }
 
 func rateLimitMiddleware(limiter *tokenRateLimiter) middleware {

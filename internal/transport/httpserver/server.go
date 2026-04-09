@@ -4,7 +4,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
+	"os"
 
 	"pass_gen/internal/usecase"
 )
@@ -12,7 +14,16 @@ import (
 type Server struct {
 	processor    *usecase.PasswordProcessor
 	transportKey []byte
+	logger       *slog.Logger
+	rateRPS      int
+	rateBurst    int
+	metrics      *metrics
 }
+
+type Option func(*Server)
+
+const apiVersionHeader = "X-API-Version"
+const apiVersionValue = "v1"
 
 type registerRequest struct {
 	Password string `json:"password"`
@@ -32,14 +43,47 @@ type generateRequest struct {
 	Count  int `json:"count"`
 }
 
-func New(processor *usecase.PasswordProcessor, transportKey []byte) (*Server, error) {
+func WithLogger(logger *slog.Logger) Option {
+	return func(s *Server) {
+		if logger != nil {
+			s.logger = logger
+		}
+	}
+}
+
+func WithRateLimit(rps int, burst int) Option {
+	return func(s *Server) {
+		if rps > 0 {
+			s.rateRPS = rps
+		}
+		if burst > 0 {
+			s.rateBurst = burst
+		}
+	}
+}
+
+func New(processor *usecase.PasswordProcessor, transportKey []byte, opts ...Option) (*Server, error) {
 	if processor == nil {
 		return nil, errors.New("processor is required")
 	}
 	if len(transportKey) == 0 {
 		return nil, errors.New("transport key is required")
 	}
-	return &Server{processor: processor, transportKey: transportKey}, nil
+
+	s := &Server{
+		processor:    processor,
+		transportKey: transportKey,
+		logger:       slog.New(slog.NewJSONHandler(os.Stdout, nil)),
+		rateRPS:      30,
+		rateBurst:    60,
+		metrics:      newMetrics(),
+	}
+
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	return s, nil
 }
 
 func DecodeTransportKeyBase64(raw string) ([]byte, error) {
@@ -59,15 +103,19 @@ func DecodeTransportKeyBase64(raw string) ([]byte, error) {
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.Handle("GET /metrics", s.metrics.handler())
 	mux.HandleFunc("POST /v1/passwords/register", s.handleRegister)
 	mux.HandleFunc("POST /v1/passwords/generate", s.handleGenerate)
 	mux.HandleFunc("POST /v1/passwords/validate", s.handleValidate)
 	mux.HandleFunc("POST /v1/passwords/strength", s.handleStrength)
+
 	return chain(
 		mux,
 		requestIDMiddleware,
-		recoveryMiddleware,
-		rateLimitMiddleware(newTokenRateLimiter(30, 60)),
+		recoveryMiddleware(s.logger),
+		s.metrics.middleware,
+		loggingMiddleware(s.logger),
+		rateLimitMiddleware(newTokenRateLimiter(s.rateRPS, s.rateBurst)),
 	)
 }
 
@@ -161,6 +209,7 @@ func writeError(w http.ResponseWriter, r *http.Request, status int, msg string) 
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(apiVersionHeader, apiVersionValue)
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
 }

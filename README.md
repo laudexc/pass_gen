@@ -1,104 +1,258 @@
 ﻿# pass_gen
 
-## Текущий статус
+`pass_gen` — backend-сервис для безопасной работы с паролями.
 
-Сделано:
-- Генерация пароля через `crypto/rand`.
-- Убрана предсказуемость позиции классов символов (добавлен secure shuffle).
-- Ошибки из криптографии не игнорируются.
-- Добавлен Argon2id (`golang.org/x/crypto/argon2`) для хеширования.
-- Пароль не возвращается клиенту обратно.
-- Для межсервисной передачи реализовано шифрование (AES-GCM) + Base64.
-- В БД должен сохраняться только хеш, не открытый пароль.
-- Выполнена базовая структура проекта:
-  - `cmd/passgen/main.go` — entrypoint.
-  - `internal/security/password` — генерация, hash/verify, transport encryption.
-  - `internal/usecase` — сценарии `RegisterPassword`, `VerifyPassword`, `GenerateAndRegister`, `PasswordStrength`.
-- Реализованы CLI-команды:
-  - `generate`
-  - `validate`
-  - `strength`
-  - `keygen`
-  - `server` (запуск HTTP API)
-- Подготовлен HTTP-слой:
-  - `GET /healthz`
-  - `POST /v1/passwords/register`
-  - `POST /v1/passwords/generate`
-  - `POST /v1/passwords/validate`
-  - `POST /v1/passwords/strength`
-- Добавлены middleware для HTTP:
-  - `X-Request-ID` (корреляция запросов)
-  - `panic recovery` (500 без утечки деталей)
-  - `rate limit` (базовая защита от перегрузки)
-- Подключён PostgreSQL-репозиторий и схема (`migrations/001_init.sql`) для:
-  - хранения только Argon2id хешей
-  - аудита генераций (length/count/created_at)
-- Добавлен OpenAPI контракт: `docs/openapi.yaml`.
-- Добавлены интеграционные тесты HTTP + PostgreSQL.
-- Добавлен CI workflow `.github/workflows/ci.yml`:
-  - `gofmt` check
-  - `go vet`
-  - OpenAPI check
-  - migration check
-  - unit + integration tests
-  - build
-- Добавлены инфраструктурные файлы:
-  - `Dockerfile`
-  - `docker-compose.yml`
-  - `.env.example`
-  - `Makefile`
+Ключевая идея:
+- пароль можно принять и обработать,
+- но наружу plaintext-пароль не возвращается,
+- в БД хранится только Argon2id-хеш,
+- для межсервисной передачи используется шифртекст (AES-GCM + Base64).
 
-## Что дальше по плану (следующий шаг)
+---
 
-Следующий приоритет: подготовка к релизу и эксплуатация.
+## Что умеет проект
 
-1. Добавить structured logging и метрики (Prometheus).
-2. Добавить release workflow (теги, артефакты, контейнерный образ).
-3. Добавить контрактные тесты для внешних клиентов API.
+1. Сгенерировать безопасные пароли.
+2. Принять пароль пользователя и сохранить только хеш.
+3. Проверить пароль против хеша.
+4. Оценить сложность пароля.
+5. Отдать метрики для Prometheus.
 
-## Жесткие правила проекта
+HTTP API:
+- `GET /healthz`
+- `GET /metrics`
+- `POST /v1/passwords/register`
+- `POST /v1/passwords/generate`
+- `POST /v1/passwords/validate`
+- `POST /v1/passwords/strength`
 
-- Пароли не логировать.
-- Пароли не возвращать наружу после приёма на backend.
-- В БД хранить только Argon2id-хеш + соль/параметры в encoded-формате.
-- Межсервисно передавать только шифртекст (например Base64 поверх AES-GCM).
+---
 
-## Запуск интеграционных тестов (HTTP + PostgreSQL)
+## Быстрый старт (самый простой путь)
 
-Интеграционные тесты используют переменную окружения `PASSGEN_TEST_DSN`.
+Инструкция рассчитана на Windows + PowerShell.
 
-Пример:
+### 1. Что должно быть установлено
+
+1. Git
+2. Go (актуальная версия)
+3. Docker Desktop
+
+Проверка:
 
 ```powershell
-$env:PASSGEN_TEST_DSN="postgres://user:pass@localhost:5432/passgen_test?sslmode=disable"
-go test ./...
+go version
+docker --version
+docker compose version
 ```
 
-Если `PASSGEN_TEST_DSN` не задана, интеграционные тесты автоматически пропускаются.
-
-## Локальный запуск через Docker Compose
-
-1. Скопировать `.env.example` в `.env`.
-2. Сгенерировать ключ:
+### 2. Скачать проект
 
 ```powershell
-go run ./cmd/passgen keygen
+git clone <URL_ТВОЕГО_РЕПО>
+cd pass_gen
 ```
 
-3. Вставить ключ в `PASSGEN_TRANSPORT_KEY_BASE64` в `.env`.
-4. Запустить сервисы:
+### 3. Создать `.env`
+
+```powershell
+Copy-Item .env.example .env
+```
+
+### 4. Сгенерировать ключ шифрования
+
+```powershell
+go run .\cmd\passgen keygen
+```
+
+Скопируй выведенную строку и вставь в `.env`:
+
+```env
+PASSGEN_TRANSPORT_KEY_BASE64=СЮДА_ВСТАВЬ_КЛЮЧ
+```
+
+### 5. Запустить сервис и БД
 
 ```powershell
 docker compose up --build
 ```
 
-Сервер будет доступен на `http://localhost:8080`.
+После запуска сервис доступен на:
+- `http://localhost:8080`
 
-## Технический roadmap
+### 6. Проверить, что сервис жив
 
-1. Этап 1: стабилизация core и тесты.
-2. Этап 2: CLI (`generate`, `validate`, `strength`).
-3. Этап 3: HTTP API (`/v1/passwords/generate`, `/validate`, `/strength`, `/healthz`).
-4. Этап 4: PostgreSQL + миграции + аудит (без хранения открытых паролей).
-5. Этап 5: CI/CD, линтеры, безопасность, метрики.
-6. Этап 6: минимальный Java-адаптер (только если реально нужен для интеграции).
+```powershell
+curl http://localhost:8080/healthz
+```
+
+Ожидаемо:
+
+```json
+{"status":"ok"}
+```
+
+---
+
+## Как пользоваться API (по шагам)
+
+## Шаг 1. Зарегистрировать пароль
+
+Запрос:
+
+```powershell
+curl -X POST http://localhost:8080/v1/passwords/register `
+  -H "Content-Type: application/json" `
+  -d "{\"password\":\"MyStrong!Pass123\"}"
+```
+
+Что происходит:
+1. Пароль принимается backend-ом.
+2. В БД сохраняется только Argon2id-хеш.
+3. В ответ приходит только `transport_ciphertext`.
+
+## Шаг 2. Сгенерировать пароли
+
+```powershell
+curl -X POST http://localhost:8080/v1/passwords/generate `
+  -H "Content-Type: application/json" `
+  -d "{\"length\":12,\"count\":3}"
+```
+
+Что получишь:
+- список `transport_ciphertexts`.
+- plaintext-пароли не возвращаются.
+
+## Шаг 3. Проверить пароль против хеша
+
+```powershell
+curl -X POST http://localhost:8080/v1/passwords/validate `
+  -H "Content-Type: application/json" `
+  -d "{\"password\":\"MyStrong!Pass123\",\"hash\":\"<ARGON2ID_HASH>\"}"
+```
+
+Ожидаемо:
+
+```json
+{"valid":true}
+```
+
+## Шаг 4. Оценить сложность
+
+```powershell
+curl -X POST http://localhost:8080/v1/passwords/strength `
+  -H "Content-Type: application/json" `
+  -d "{\"password\":\"MyStrong!Pass123\"}"
+```
+
+Ожидаемо: вернется `score`, `label` и детали валидации.
+
+## Шаг 5. Проверить метрики
+
+```powershell
+curl http://localhost:8080/metrics
+```
+
+---
+
+## Если хочешь через Postman
+
+1. Создай запрос.
+2. Выбери метод (`GET` или `POST`).
+3. URL: `http://localhost:8080/...`
+4. Для `POST`: `Body -> raw -> JSON`.
+5. Заголовок: `Content-Type: application/json`.
+
+Проверь response headers:
+- `X-Request-ID`
+- `X-API-Version: v1`
+
+---
+
+## CLI команды (без HTTP)
+
+```powershell
+go run .\cmd\passgen keygen
+go run .\cmd\passgen generate --length 12 --count 2 --json
+go run .\cmd\passgen strength --password "MyStrong!Pass123" --json
+```
+
+---
+
+## Тесты и проверки
+
+## Юнит + интеграционные тесты
+
+```powershell
+go test ./...
+```
+
+## Проверка OpenAPI
+
+```powershell
+go run .\cmd\openapicheck docs/openapi.yaml
+```
+
+## Проверка миграций
+
+```powershell
+$env:PASSGEN_TEST_DSN="postgres://passgen:change-me@localhost:5432/passgen?sslmode=disable"
+go run .\cmd\migrationcheck
+```
+
+---
+
+## Мониторинг (опционально)
+
+Запуск с профилем observability:
+
+```powershell
+docker compose --profile observability up --build
+```
+
+После запуска:
+- App: `http://localhost:8080`
+- Prometheus: `http://localhost:9090`
+- Alertmanager: `http://localhost:9093`
+
+---
+
+## Частые проблемы
+
+## Ошибка `directory not found` при `go run ./cmd/passgen ...`
+
+Причина: ты находишься не в корне проекта.
+
+Решение:
+
+```powershell
+cd C:\.My\Golang_files\pass_gen
+go run .\cmd\passgen keygen
+```
+
+Если ты уже в `cmd\passgen`, запускай так:
+
+```powershell
+go run . keygen
+```
+
+## Ошибка Docker
+
+Проверь, что Docker Desktop запущен.
+
+## Не стартует API из-за БД
+
+Проверь значения в `.env`:
+- `POSTGRES_DB`
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
+- `PASSGEN_TRANSPORT_KEY_BASE64`
+
+---
+
+## Важно по безопасности
+
+1. Не коммить `.env` в git.
+2. Не логируй plaintext-пароли.
+3. В проде храни секреты в секрет-менеджере, а не в файле.
+4. Для изменений API держи совместимость `v1`.

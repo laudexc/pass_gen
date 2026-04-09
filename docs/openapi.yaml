@@ -20,6 +20,16 @@ paths:
                   status:
                     type: string
                     example: ok
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      responses:
+        '200':
+          description: Metrics payload
+          content:
+            text/plain:
+              schema:
+                type: string
   /v1/passwords/register:
     post:
       summary: Register user password

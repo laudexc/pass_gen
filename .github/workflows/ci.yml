@@ -55,3 +55,25 @@ jobs:
 
       - name: Build
         run: make build
+
+      - name: Smoke run server
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PASSGEN_DB_DSN="${PASSGEN_TEST_DSN}"
+          export PASSGEN_TRANSPORT_KEY_BASE64="$(go run ./cmd/passgen keygen)"
+          go run ./cmd/passgen server --addr 127.0.0.1:18080 > /tmp/passgen-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill ${server_pid} || true; cat /tmp/passgen-server.log || true' EXIT
+
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/healthz > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+          curl -fsS http://127.0.0.1:18080/healthz | grep '"status":"ok"'
+          curl -fsS http://127.0.0.1:18080/metrics | grep 'passgen_http_requests_total'
+          kill ${server_pid}
+          wait ${server_pid} || true

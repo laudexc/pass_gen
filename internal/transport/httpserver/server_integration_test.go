@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"pass_gen/internal/repository/postgres"
@@ -31,6 +33,32 @@ func TestServerIntegration_Healthz(t *testing.T) {
 	if resp.Header.Get("X-Request-ID") == "" {
 		t.Fatal("expected X-Request-ID header")
 	}
+	if resp.Header.Get("X-API-Version") != "v1" {
+		t.Fatalf("expected X-API-Version=v1, got %q", resp.Header.Get("X-API-Version"))
+	}
+}
+
+func TestServerIntegration_MetricsEndpoint(t *testing.T) {
+	ts, _, cleanup := setupIntegrationServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(ts.URL + "/metrics")
+	if err != nil {
+		t.Fatalf("GET /metrics failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read metrics body failed: %v", err)
+	}
+	if !strings.Contains(string(body), "passgen_http_requests_total") {
+		t.Fatal("expected passgen metrics to be present")
+	}
 }
 
 func TestServerIntegration_RegisterAndGenerate(t *testing.T) {
@@ -44,6 +72,12 @@ func TestServerIntegration_RegisterAndGenerate(t *testing.T) {
 	if registerResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected status 200 on register, got %d", registerResp.StatusCode)
 	}
+	if !strings.Contains(registerResp.Header.Get("Content-Type"), "application/json") {
+		t.Fatalf("expected application/json, got %q", registerResp.Header.Get("Content-Type"))
+	}
+	if registerResp.Header.Get("X-API-Version") != "v1" {
+		t.Fatalf("expected X-API-Version=v1, got %q", registerResp.Header.Get("X-API-Version"))
+	}
 
 	var registerPayload map[string]any
 	if err := json.NewDecoder(registerResp.Body).Decode(&registerPayload); err != nil {
@@ -54,6 +88,9 @@ func TestServerIntegration_RegisterAndGenerate(t *testing.T) {
 	}
 	if registerPayload["transport_ciphertext"] == "" {
 		t.Fatal("expected non-empty transport_ciphertext")
+	}
+	if _, exists := registerPayload["password"]; exists {
+		t.Fatal("response must not contain plaintext password")
 	}
 
 	ctx := context.Background()
@@ -84,6 +121,38 @@ func TestServerIntegration_RegisterAndGenerate(t *testing.T) {
 
 	assertTableCount(t, repo, ctx, "password_hashes", 3)
 	assertTableCount(t, repo, ctx, "generation_audit", 1)
+}
+
+func TestServerIntegration_ErrorContractIncludesRequestID(t *testing.T) {
+	ts, _, cleanup := setupIntegrationServer(t)
+	defer cleanup()
+
+	resp := postJSON(t, ts.URL+"/v1/passwords/register", []byte(`{"password":""}`))
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", resp.StatusCode)
+	}
+	if !strings.Contains(resp.Header.Get("Content-Type"), "application/json") {
+		t.Fatalf("expected application/json, got %q", resp.Header.Get("Content-Type"))
+	}
+	if resp.Header.Get("X-Request-ID") == "" {
+		t.Fatal("expected X-Request-ID header")
+	}
+	if resp.Header.Get("X-API-Version") != "v1" {
+		t.Fatalf("expected X-API-Version=v1, got %q", resp.Header.Get("X-API-Version"))
+	}
+
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode error response failed: %v", err)
+	}
+	if payload["error"] == "" {
+		t.Fatal("expected error field in response")
+	}
+	if payload["request_id"] == "" {
+		t.Fatal("expected request_id field in response body")
+	}
 }
 
 func TestServerIntegration_ValidateAndStrength(t *testing.T) {
