@@ -1,2 +1,7 @@
+﻿# Local editor dirs
 .vscode
 .zed
+
+# Local environment and runtime files
+.env
+*.log

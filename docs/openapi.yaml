@@ -1,0 +1,235 @@
+﻿openapi: 3.0.3
+info:
+  title: pass_gen API
+  version: 1.0.0
+  description: API for secure password processing without returning plaintext passwords.
+servers:
+  - url: http://localhost:8080
+paths:
+  /healthz:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /v1/passwords/register:
+    post:
+      summary: Register user password
+      description: Accepts plaintext password, stores only hash, returns transport ciphertext.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '200':
+          description: Password processed and stored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/passwords/generate:
+    post:
+      summary: Generate secure passwords
+      description: Generates passwords, stores only hashes, returns only encrypted transport payloads.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateRequest'
+      responses:
+        '200':
+          description: Passwords generated and stored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/passwords/validate:
+    post:
+      summary: Validate password against hash
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ValidateRequest'
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/passwords/strength:
+    post:
+      summary: Estimate password strength
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StrengthRequest'
+      responses:
+        '200':
+          description: Strength result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StrengthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  responses:
+    BadRequest:
+      description: Invalid input
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RateLimited:
+      description: Too many requests
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    RegisterRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          format: password
+    RegisterResponse:
+      type: object
+      properties:
+        stored:
+          type: boolean
+          example: true
+        transport_ciphertext:
+          type: string
+          description: Base64 encoded AES-GCM payload.
+    GenerateRequest:
+      type: object
+      required: [length, count]
+      properties:
+        length:
+          type: integer
+          minimum: 4
+          example: 12
+        count:
+          type: integer
+          minimum: 1
+          maximum: 50
+          example: 2
+    GenerateResponse:
+      type: object
+      properties:
+        stored:
+          type: boolean
+          example: true
+        count:
+          type: integer
+          example: 2
+        transport_ciphertexts:
+          type: array
+          items:
+            type: string
+    ValidateRequest:
+      type: object
+      required: [password, hash]
+      properties:
+        password:
+          type: string
+          format: password
+        hash:
+          type: string
+          description: Argon2id encoded hash.
+    ValidateResponse:
+      type: object
+      properties:
+        valid:
+          type: boolean
+    StrengthRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          format: password
+    StrengthResponse:
+      type: object
+      properties:
+        score:
+          type: integer
+          minimum: 0
+          maximum: 4
+        label:
+          type: string
+          enum: [weak, fair, good, strong]
+        validation:
+          $ref: '#/components/schemas/ValidationResult'
+    ValidationResult:
+      type: object
+      properties:
+        length:
+          type: integer
+        has_upper:
+          type: boolean
+        has_lower:
+          type: boolean
+        has_digit:
+          type: boolean
+        has_special:
+          type: boolean
+        min_length_met:
+          type: boolean
+        classes_matched:
+          type: integer
+        valid:
+          type: boolean
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        request_id:
+          type: string
