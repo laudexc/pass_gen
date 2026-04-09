@@ -42,6 +42,13 @@ func TestServerIntegration_MetricsEndpoint(t *testing.T) {
 	ts, _, cleanup := setupIntegrationServer(t)
 	defer cleanup()
 
+	// First hit ensures at least one instrumented request is recorded.
+	healthResp, err := http.Get(ts.URL + "/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz failed: %v", err)
+	}
+	_ = healthResp.Body.Close()
+
 	resp, err := http.Get(ts.URL + "/metrics")
 	if err != nil {
 		t.Fatalf("GET /metrics failed: %v", err)
