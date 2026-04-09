@@ -1,0 +1,19 @@
+﻿.git
+.github
+.vscode
+.zed
+
+.env
+*.log
+
+**/tmp
+**/bin
+**/vendor
+**/.DS_Store
+
+# Dev/docs artifacts not needed for runtime build
+CHANGELOG.md
+README.md
+docs
+deploy
+migrations

@@ -201,6 +201,30 @@ docker compose --profile observability up --build
 
 ---
 
+## Docker: размер и память (важно)
+
+- Финальный `app` образ теперь собирается как минимальный (`scratch`) со статическим Go-бинарником.
+- Добавлен `.dockerignore`, чтобы уменьшить контекст сборки.
+
+Проверить размер образов:
+
+```powershell
+docker images | Select-String pass_gen
+```
+
+Важно: если ты видишь ~3 ГБ RAM, это обычно лимит/кэш самого Docker Desktop, а не только наш контейнер.
+Проверить реальное потребление контейнеров:
+
+```powershell
+docker stats
+```
+
+Если нужно снизить общее потребление Docker Desktop:
+1. Docker Desktop -> Settings -> Resources.
+2. Уменьши Memory/CPU лимиты.
+
+---
+
 ## Частые ошибки
 
 ## Ошибка `directory not found` при `go run ./cmd/passgen ...`
